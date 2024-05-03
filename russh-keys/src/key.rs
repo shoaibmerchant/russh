@@ -19,6 +19,7 @@ use ed25519_dalek::{Signer, Verifier};
 use rand_core::OsRng;
 use russh_cryptovec::CryptoVec;
 use serde::{Deserialize, Serialize};
+use ssh_key::Certificate;
 
 use crate::backend;
 use crate::ec;
@@ -47,6 +48,8 @@ pub const ECDSA_SHA2_NISTP384: Name = Name("ecdsa-sha2-nistp384");
 pub const ECDSA_SHA2_NISTP521: Name = Name("ecdsa-sha2-nistp521");
 /// The name of the Ed25519 algorithm for SSH.
 pub const ED25519: Name = Name("ssh-ed25519");
+// The name of the Ed25519 OpenSSH Cert algorithm for SSH
+pub const ED25519CERT: Name = Name("ssh-ed25519-cert-v01@openssh.com");
 /// The name of the ssh-sha2-512 algorithm for SSH.
 pub const RSA_SHA2_512: Name = Name("rsa-sha2-512");
 /// The name of the ssh-sha2-256 algorithm for SSH.
@@ -260,6 +263,11 @@ impl Verify for PublicKey {
 #[allow(clippy::large_enum_variant)]
 pub enum KeyPair {
     Ed25519(ed25519_dalek::SigningKey),
+    Ed25519Cert {
+        key: ed25519_dalek::SigningKey,
+        cert: Certificate,
+    },
+    // Ed25519Cert(ed25519_dalek::SigningKey, ed25519_dalek::VerifyingKey),
     RSA {
         key: backend::RsaPrivate,
         hash: SignatureHash,
@@ -275,6 +283,12 @@ impl Clone for KeyPair {
             #[allow(clippy::expect_used)]
             Self::Ed25519(kp) => {
                 Self::Ed25519(ed25519_dalek::SigningKey::from_bytes(&kp.to_bytes()))
+            }
+            Self::Ed25519Cert { key, cert } => {
+                Self::Ed25519Cert {
+                    key: ed25519_dalek::SigningKey::from_bytes(&key.to_bytes()),
+                    cert: Certificate::from_bytes(&cert.to_bytes().unwrap()).unwrap(),
+                }
             }
             Self::RSA { key, hash } => Self::RSA {
                 key: key.clone(),
@@ -292,6 +306,11 @@ impl std::fmt::Debug for KeyPair {
                 f,
                 "Ed25519 {{ public: {:?}, secret: (hidden) }}",
                 key.verifying_key().as_bytes()
+            ),
+            KeyPair::Ed25519Cert { key: _, ref cert } => write!(
+                f,
+                "Ed25519Cert {{ cert: {:?}, secret: (hidden) }}",
+                cert.to_bytes(),
             ),
             KeyPair::RSA { .. } => write!(f, "RSA {{ (hidden) }}"),
             KeyPair::EC { .. } => write!(f, "EC {{ (hidden) }}"),
@@ -321,6 +340,8 @@ impl KeyPair {
     pub fn clone_public_key(&self) -> Result<PublicKey, Error> {
         Ok(match self {
             KeyPair::Ed25519(ref key) => PublicKey::Ed25519(key.verifying_key()),
+            KeyPair::Ed25519Cert { key, cert } => PublicKey::Ed25519(key.verifying_key()), // TODO
+
             KeyPair::RSA { ref key, ref hash } => PublicKey::RSA {
                 key: key.try_into()?,
                 hash: *hash,
@@ -335,6 +356,7 @@ impl KeyPair {
     pub fn name(&self) -> &'static str {
         match *self {
             KeyPair::Ed25519(_) => ED25519.0,
+            KeyPair::Ed25519Cert { .. } => ED25519CERT.0,
             KeyPair::RSA { ref hash, .. } => hash.name().0,
             KeyPair::EC { ref key } => key.algorithm(),
         }
@@ -363,6 +385,9 @@ impl KeyPair {
             KeyPair::Ed25519(ref secret) => Ok(Signature::Ed25519(SignatureBytes(
                 secret.sign(to_sign).to_bytes(),
             ))),
+            KeyPair::Ed25519Cert{ key, cert } => Ok(Signature::Ed25519(SignatureBytes(
+                key.sign(to_sign).to_bytes(),
+            ))),
             KeyPair::RSA { ref key, ref hash } => Ok(Signature::RSA {
                 bytes: key.sign(hash, to_sign)?,
                 hash: *hash,
@@ -386,6 +411,13 @@ impl KeyPair {
         match self {
             KeyPair::Ed25519(ref secret) => {
                 let signature = secret.sign(to_sign.as_ref());
+
+                buffer.push_u32_be((ED25519.0.len() + signature.to_bytes().len() + 8) as u32);
+                buffer.extend_ssh_string(ED25519.0.as_bytes());
+                buffer.extend_ssh_string(signature.to_bytes().as_slice());
+            }
+            KeyPair::Ed25519Cert { key, cert } => {
+                let signature = key.sign(to_sign.as_ref());
 
                 buffer.push_u32_be((ED25519.0.len() + signature.to_bytes().len() + 8) as u32);
                 buffer.extend_ssh_string(ED25519.0.as_bytes());
@@ -422,6 +454,12 @@ impl KeyPair {
                 buffer.extend_ssh_string(ED25519.0.as_bytes());
                 buffer.extend_ssh_string(signature.to_bytes().as_slice());
             }
+            KeyPair::Ed25519Cert { key, cert } => {
+                let signature = key.sign(buffer);
+                buffer.push_u32_be((ED25519.0.len() + signature.to_bytes().len() + 8) as u32);
+                buffer.extend_ssh_string(ED25519.0.as_bytes());
+                buffer.extend_ssh_string(signature.to_bytes().as_slice());
+            }
             KeyPair::RSA { ref key, ref hash } => {
                 // https://tools.ietf.org/html/draft-rsa-dsa-sha2-256-02#section-2.2
                 let signature = key.sign(hash, buffer)?;
@@ -445,6 +483,7 @@ impl KeyPair {
     pub fn with_signature_hash(&self, hash: SignatureHash) -> Option<Self> {
         match self {
             KeyPair::Ed25519(_) => None,
+            KeyPair::Ed25519Cert { .. } => None,
             KeyPair::RSA { key, .. } => Some(KeyPair::RSA {
                 key: key.clone(),
                 hash,

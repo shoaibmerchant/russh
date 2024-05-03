@@ -75,6 +75,7 @@ use data_encoding::BASE64_MIME;
 use hmac::{Hmac, Mac};
 use log::debug;
 use sha1::Sha1;
+use ssh_key::Certificate;
 use thiserror::Error;
 
 pub mod ec;
@@ -277,6 +278,12 @@ impl PublicKeyBase64 for key::KeyPair {
                 s.write_u32::<BigEndian>(public.len() as u32).unwrap();
                 s.extend_from_slice(public.as_slice());
             }
+            key::KeyPair::Ed25519Cert { ref key, .. } => {
+                let public = key.verifying_key().to_bytes();
+                #[allow(clippy::unwrap_used)] // Vec<>.write can't fail
+                s.write_u32::<BigEndian>(public.len() as u32).unwrap();
+                s.extend_from_slice(public.as_slice());
+            }
             key::KeyPair::RSA { ref key, .. } => {
                 use encoding::Encoding;
                 s.extend_ssh(&protocol::RsaPublicKey::from(key));
@@ -314,11 +321,12 @@ pub fn write_public_key_base64<W: Write>(
 pub fn load_secret_key<P: AsRef<Path>>(
     secret_: P,
     password: Option<&str>,
+    certificate: Option<Certificate>,
 ) -> Result<key::KeyPair, Error> {
     let mut secret_file = std::fs::File::open(secret_)?;
     let mut secret = String::new();
     secret_file.read_to_string(&mut secret)?;
-    decode_secret_key(&secret, password)
+    decode_secret_key(&secret, password, certificate)
 }
 
 fn is_base64_char(c: char) -> bool {
@@ -547,13 +555,13 @@ QR+u0AypRPmzHnOPAAAAEXJvb3RAMTQwOTExNTQ5NDBkAQ==
     #[test]
     fn test_decode_ed25519_secret_key() {
         env_logger::try_init().unwrap_or(());
-        decode_secret_key(ED25519_KEY, Some("blabla")).unwrap();
+        decode_secret_key(ED25519_KEY, Some("blabla"), None).unwrap();
     }
 
     #[test]
     fn test_decode_ed25519_aesctr_secret_key() {
         env_logger::try_init().unwrap_or(());
-        decode_secret_key(ED25519_AESCTR_KEY, Some("test")).unwrap();
+        decode_secret_key(ED25519_AESCTR_KEY, Some("test"), None).unwrap();
     }
 
     // Key from RFC 8410 Section 10.3. This is a key using PrivateKeyInfo structure.
@@ -565,7 +573,7 @@ MC4CAQAwBQYDK2VwBCIEINTuctv5E1hK1bbY8fdp+K06/nwoy/HU++CXqI9EdVhC
     fn test_decode_rfc8410_ed25519_private_only_key() {
         env_logger::try_init().unwrap_or(());
         assert!(matches!(
-            decode_secret_key(RFC8410_ED25519_PRIVATE_ONLY_KEY, None),
+            decode_secret_key(RFC8410_ED25519_PRIVATE_ONLY_KEY, None, None),
             Ok(key::KeyPair::Ed25519 { .. })
         ));
         // We always encode public key, skip test_decode_encode_symmetry.
@@ -582,7 +590,7 @@ Z9w7lshQhqowtrbLDFw4rXAxZuE=
     fn test_decode_rfc8410_ed25519_private_public_key() {
         env_logger::try_init().unwrap_or(());
         assert!(matches!(
-            decode_secret_key(RFC8410_ED25519_PRIVATE_PUBLIC_KEY, None),
+            decode_secret_key(RFC8410_ED25519_PRIVATE_PUBLIC_KEY, None, None),
             Ok(key::KeyPair::Ed25519 { .. })
         ));
         // We can't encode attributes, skip test_decode_encode_symmetry.
@@ -591,7 +599,7 @@ Z9w7lshQhqowtrbLDFw4rXAxZuE=
     #[test]
     fn test_decode_rsa_secret_key() {
         env_logger::try_init().unwrap_or(());
-        decode_secret_key(RSA_KEY, None).unwrap();
+        decode_secret_key(RSA_KEY, None, None).unwrap();
     }
 
     #[test]
@@ -608,7 +616,7 @@ dgECAw==
 -----END OPENSSH PRIVATE KEY-----
 ";
         assert!(matches!(
-            decode_secret_key(key, None),
+            decode_secret_key(key, None, None),
             Ok(key::KeyPair::EC {
                 key: ec::PrivateKey::P256(_),
             })
@@ -630,7 +638,7 @@ Ylv0h4Wyzto8NfLQAAAA1yb2JlcnRAYmJzZGV2AQID
 -----END OPENSSH PRIVATE KEY-----
 ";
         assert!(matches!(
-            decode_secret_key(key, None),
+            decode_secret_key(key, None, None),
             Ok(key::KeyPair::EC {
                 key: ec::PrivateKey::P384(_),
             })
@@ -654,7 +662,7 @@ Ve0k2ddxoEsSE15H4lgNHM2iuYKzIqZJOReHRCTff6QGgMYPDqDfFfL1Hc1Ntql0pwAAAA
 -----END OPENSSH PRIVATE KEY-----
 ";
         assert!(matches!(
-            decode_secret_key(key, None),
+            decode_secret_key(key, None, None),
             Ok(key::KeyPair::EC {
                 key: ec::PrivateKey::P521(_),
             })
@@ -801,7 +809,7 @@ b9sblB+ssEUQD5IQkhTWcsXdslINQeL77WhIMZ2vBAH8Hcin4jgcLmwUZfpfnnFs
 QaChXiDsryJZwsRnruvMRX9nedtqHrgnIsJLTXjppIhGhq5Kg4RQfOU=
 -----END RSA PRIVATE KEY-----
 ";
-        decode_secret_key(key, None).unwrap();
+        decode_secret_key(key, None, None).unwrap();
     }
 
     #[test]
@@ -825,7 +833,7 @@ csKph4+a9f37jyE=
 -----END PRIVATE KEY-----
 ";
         assert!(matches!(
-            decode_secret_key(key, None),
+            decode_secret_key(key, None, None),
             Ok(key::KeyPair::RSA { .. })
         ));
         test_decode_encode_symmetry(key);
@@ -841,7 +849,7 @@ qa92U3p4fkJToKXku5eq/32OBj23YMtz76jO3yfMbtG3l1JWLowPA8tV
 -----END PRIVATE KEY-----
 ";
         assert!(matches!(
-            decode_secret_key(key, None),
+            decode_secret_key(key, None, None),
             Ok(key::KeyPair::EC {
                 key: ec::PrivateKey::P256(_)
             })
@@ -860,7 +868,7 @@ CI3WfCsQvVjoC7m8qRyxuvR3Rv8gGXR1coQciIoCurLnn9zOFvXCS2Y=
 -----END PRIVATE KEY-----
 ";
         assert!(matches!(
-            decode_secret_key(key, None),
+            decode_secret_key(key, None, None),
             Ok(key::KeyPair::EC {
                 key: ec::PrivateKey::P384(_)
             })
@@ -881,7 +889,7 @@ Ow==
 -----END PRIVATE KEY-----
 ";
         assert!(matches!(
-            decode_secret_key(key, None),
+            decode_secret_key(key, None, None),
             Ok(key::KeyPair::EC {
                 key: ec::PrivateKey::P521(_)
             })
@@ -899,13 +907,13 @@ Ow==
                     .as_bytes(),
             )
             .unwrap();
-        let decoded_key = decode_secret_key(key, None).unwrap();
+        let decoded_key = decode_secret_key(key, None, None).unwrap();
         let encoded_key_bytes = pkcs8::encode_pkcs8(&decoded_key).unwrap();
         assert_eq!(original_key_bytes, encoded_key_bytes);
     }
 
     fn ecdsa_sign_verify(key: &str, public: &str) {
-        let key = decode_secret_key(key, None).unwrap();
+        let key = decode_secret_key(key, None, None).unwrap();
         let buf = b"blabla";
         let sig = key.sign_detached(buf).unwrap();
         // Verify using the provided public key.
@@ -1067,7 +1075,7 @@ raMODVc+NiJE0Qe6bwAi4HSpJ0qw2lKwVHYB8cdnNVv13acApod326/9itdbb3lt
 KJaj7gc0n6gmKY6r0/Ddufy1JZ6eihBCSJ64RARBXeg2rZpyT+xxhMEZLK5meOeR
 -----END RSA PRIVATE KEY-----
 ";
-        let key = decode_secret_key(key, Some("passphrase")).unwrap();
+        let key = decode_secret_key(key, Some("passphrase"), None).unwrap();
         let public = key.clone_public_key()?;
         let buf = b"blabla";
         let sig = key.sign_detached(buf).unwrap();
@@ -1110,13 +1118,13 @@ iKUmK5recsXk5us5Ik7peIR/f9GAghpoJkF0HrHio47SfABuK30pzcj62uNWGljS
 br8gXU8KyiY9sZVbmplRPF+ar462zcI2kt0a18mr0vbrdqp2eMjb37QDbVBJ+rPE
 -----END RSA PRIVATE KEY-----
 ";
-        decode_secret_key(key, Some("12345")).unwrap();
+        decode_secret_key(key, Some("12345"), None).unwrap();
     }
     #[test]
     fn test_pkcs8() {
         env_logger::try_init().unwrap_or(());
         println!("test");
-        decode_secret_key(PKCS8_RSA, Some("blabla")).unwrap();
+        decode_secret_key(PKCS8_RSA, Some("blabla"), None).unwrap();
     }
 
     const PKCS8_ENCRYPTED: &str = "-----BEGIN ENCRYPTED PRIVATE KEY-----
@@ -1186,7 +1194,7 @@ Cog3JMeTrb3LiPHgN6gU2P30MRp6L1j1J/MtlOAr5rux
     fn test_pkcs8_encrypted() {
         env_logger::try_init().unwrap_or(());
         println!("test");
-        decode_secret_key(PKCS8_ENCRYPTED, Some("blabla")).unwrap();
+        decode_secret_key(PKCS8_ENCRYPTED, Some("blabla"), None).unwrap();
     }
 
     #[cfg(unix)]
@@ -1237,21 +1245,21 @@ Cog3JMeTrb3LiPHgN6gU2P30MRp6L1j1J/MtlOAr5rux
     #[tokio::test]
     #[cfg(unix)]
     async fn test_client_agent_ed25519() {
-        let key = decode_secret_key(ED25519_KEY, Some("blabla")).unwrap();
+        let key = decode_secret_key(ED25519_KEY, Some("blabla"), None).unwrap();
         test_client_agent(key).await.expect("ssh-agent test failed")
     }
 
     #[tokio::test]
     #[cfg(unix)]
     async fn test_client_agent_rsa() {
-        let key = decode_secret_key(PKCS8_ENCRYPTED, Some("blabla")).unwrap();
+        let key = decode_secret_key(PKCS8_ENCRYPTED, Some("blabla"), None).unwrap();
         test_client_agent(key).await.expect("ssh-agent test failed")
     }
 
     #[tokio::test]
     #[cfg(unix)]
     async fn test_client_agent_openssh_rsa() {
-        let key = decode_secret_key(RSA_KEY, None).unwrap();
+        let key = decode_secret_key(RSA_KEY, None, None).unwrap();
         test_client_agent(key).await.expect("ssh-agent test failed")
     }
 
@@ -1287,7 +1295,7 @@ Cog3JMeTrb3LiPHgN6gU2P30MRp6L1j1J/MtlOAr5rux
             )
             .await
         });
-        let key = decode_secret_key(PKCS8_ENCRYPTED, Some("blabla")).unwrap();
+        let key = decode_secret_key(PKCS8_ENCRYPTED, Some("blabla"), None).unwrap();
         core.block_on(async move {
             let public = key.clone_public_key()?;
             let stream = tokio::net::UnixStream::connect(&agent_path).await?;

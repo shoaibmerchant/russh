@@ -18,7 +18,7 @@ use log::debug;
 use rand::RngCore;
 use russh_cryptovec::CryptoVec;
 use russh_keys::encoding::{Encoding, Reader};
-use russh_keys::key;
+use russh_keys::key::{self, ED25519CERT};
 use russh_keys::key::{KeyPair, PublicKey};
 
 use crate::cipher::CIPHERS;
@@ -154,6 +154,7 @@ impl Named for KeyPair {
     fn name(&self) -> &'static str {
         match self {
             KeyPair::Ed25519 { .. } => ED25519.0,
+            KeyPair::Ed25519Cert { .. } => ED25519CERT.0,
             KeyPair::RSA { ref hash, .. } => hash.name().0,
             KeyPair::EC { ref key } => key.algorithm(),
         }

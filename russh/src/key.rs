@@ -17,6 +17,7 @@ use russh_keys::ec;
 use russh_keys::encoding::*;
 use russh_keys::key::*;
 use russh_keys::protocol;
+use ssh_encoding::Encode;
 
 #[doc(hidden)]
 pub trait PubKey {
@@ -52,6 +53,13 @@ impl PubKey for KeyPair {
                 buffer.push_u32_be((ED25519.0.len() + public.len() + 8) as u32);
                 buffer.extend_ssh_string(ED25519.0.as_bytes());
                 buffer.extend_ssh_string(public.as_slice());
+            }
+            KeyPair::Ed25519Cert { ref key, cert } => {
+                println!("cert - {:?}", cert);
+                let mut cert_encoded = Vec::new();
+                let _ = cert.encode(&mut cert_encoded);
+
+                buffer.extend_ssh_string(&cert_encoded);
             }
             KeyPair::RSA { ref key, .. } => {
                 buffer.extend_wrapped(|buffer| {

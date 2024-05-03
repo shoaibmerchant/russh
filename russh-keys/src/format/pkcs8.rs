@@ -137,6 +137,7 @@ fn test_read_write_pkcs8() {
     let key = decode_pkcs8(&ciphertext, Some(password)).unwrap();
     match key {
         key::KeyPair::Ed25519 { .. } => println!("Ed25519"),
+        key::KeyPair::Ed25519Cert { .. } => println!("Ed25519Cert"),
         key::KeyPair::EC { .. } => println!("EC"),
         key::KeyPair::RSA { .. } => println!("RSA"),
     }
@@ -170,6 +171,7 @@ pub fn encode_pkcs8_encrypted(
 pub fn encode_pkcs8(key: &key::KeyPair) -> Result<Vec<u8>, Error> {
     let v = match *key {
         key::KeyPair::Ed25519(ref pair) => pair.to_pkcs8_der()?,
+        key::KeyPair::Ed25519Cert { ref key, .. } => key.to_pkcs8_der()?,
         key::KeyPair::RSA { ref key, .. } => SecretDocument::try_from(key)?,
         key::KeyPair::EC { ref key, .. } => key.to_pkcs8_der()?,
     }

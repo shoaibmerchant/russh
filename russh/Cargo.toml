@@ -53,6 +53,9 @@ tokio = { version = "1.17.0", features = [
     "macros",
     "process",
 ] }
+ssh-key = { version = "0.6.6", features = ["ed25519"] }
+ssh-encoding = { version = "0.2.0" }
+
 
 [dev-dependencies]
 anyhow = "1.0"
@@ -73,6 +76,7 @@ shell-escape = "0.1"
 tokio-fd = "0.3"
 termion = "2"
 ratatui = "0.26.0"
+ed25519-dalek = "2.1.1"
 
 [package.metadata.docs.rs]
 features = ["openssl"]

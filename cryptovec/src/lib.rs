@@ -307,6 +307,20 @@ impl CryptoVec {
         self.extend(&x)
     }
 
+    /// Append a new u64, big endian-encoded, at the end of this CryptoVec.
+    ///
+    /// ```
+    /// let mut v = russh_cryptovec::CryptoVec::new();
+    /// let n = 4355414214;
+    /// v.push_u64_be(n);
+    /// assert_eq!(n, v.read_u32_be(0))
+    /// ```
+    pub fn push_u64_be(&mut self, s: u64) {
+        let s = s.to_be();
+        let x: [u8; 8] = s.to_ne_bytes();
+        self.extend(&x)
+    }
+
     /// Read a big endian-encoded u32 from this CryptoVec, with the
     /// first byte at position `i`.
     ///

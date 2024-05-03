@@ -220,8 +220,9 @@ impl Session {
                     }
                 }
                 EncryptedState::WaitingAuthRequest(ref mut auth_request) => {
+                    println!("WAITING AUTH REQ");
                     if buf.first() == Some(&msg::USERAUTH_SUCCESS) {
-                        debug!("userauth_success");
+                        println!("userauth_success");
                         self.sender
                             .send(Reply::AuthSuccess)
                             .map_err(|_| crate::Error::SendError)?;
@@ -237,11 +238,11 @@ impl Session {
                             Ok(())
                         };
                     } else if buf.first() == Some(&msg::USERAUTH_FAILURE) {
-                        debug!("userauth_failure");
+                        println!("userauth_failure");
 
                         let mut r = buf.reader(1);
                         let remaining_methods = r.read_string().map_err(crate::Error::from)?;
-                        debug!(
+                        println!(
                             "remaining methods {:?}",
                             std::str::from_utf8(remaining_methods)
                         );
@@ -266,12 +267,12 @@ impl Session {
                             ref mut sent_pk_ok, ..
                         }) = auth_request.current
                         {
-                            debug!("userauth_pk_ok");
+                            println!("userauth_pk_ok");
                             *sent_pk_ok = true;
                         } else if let Some(auth::CurrentRequest::KeyboardInteractive { .. }) =
                             auth_request.current
                         {
-                            debug!("keyboard_interactive");
+                            println!("keyboard_interactive");
                             let mut r = buf.reader(1);
 
                             // read fields
@@ -326,6 +327,7 @@ impl Session {
                         // continue with userauth_pk_ok
                         match self.common.auth_method.take() {
                             Some(auth_method @ auth::Method::PublicKey { .. }) => {
+                                println!("sending signature 2");
                                 self.common.buffer.clear();
                                 enc.client_send_signature(
                                     &self.common.auth_user,
@@ -334,7 +336,7 @@ impl Session {
                                 )?
                             }
                             Some(auth::Method::FuturePublicKey { key }) => {
-                                debug!("public key");
+                                println!("public key");
                                 self.common.buffer.clear();
                                 let i = enc.client_make_to_sign(
                                     &self.common.auth_user,
@@ -367,7 +369,7 @@ impl Session {
                     } else if buf.first() == Some(&msg::EXT_INFO) {
                         return self.handle_ext_info(client, buf);
                     } else {
-                        debug!("unknown message: {:?}", buf);
+                        println!("unknown message: {:?}", buf);
                         return Err(crate::Error::Inconsistent.into());
                     }
                 }
@@ -929,6 +931,7 @@ impl Session {
 impl Encrypted {
     fn write_auth_request(&mut self, user: &str, auth_method: &auth::Method) -> bool {
         // The server is waiting for our USERAUTH_REQUEST.
+        println!("send auth request");
         push_packet!(self.write, {
             self.write.push(msg::USERAUTH_REQUEST);
 
@@ -953,7 +956,7 @@ impl Encrypted {
                     self.write.extend_ssh_string(b"publickey");
                     self.write.push(0); // This is a probe
 
-                    debug!("write_auth_request: {:?}", key.name());
+                    println!("write_auth_request: {:?}", key.name());
                     self.write.extend_ssh_string(key.name().as_bytes());
                     key.push_to(&mut self.write);
                     true
@@ -1009,6 +1012,7 @@ impl Encrypted {
     ) -> Result<(), crate::Error> {
         match method {
             auth::Method::PublicKey { ref key } => {
+                println!("sending signature 1");
                 let i0 = self.client_make_to_sign(user, key.as_ref(), buffer);
                 // Extend with self-signature.
                 key.add_self_signature(buffer)?;

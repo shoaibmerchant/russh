@@ -1,6 +1,7 @@
 use std::io::Write;
 
 use data_encoding::{BASE64_MIME, HEXLOWER_PERMISSIVE};
+use ssh_key::Certificate;
 
 use super::is_base64_char;
 use crate::{key, Error};
@@ -35,7 +36,7 @@ enum Format {
 
 /// Decode a secret key, possibly deciphering it with the supplied
 /// password.
-pub fn decode_secret_key(secret: &str, password: Option<&str>) -> Result<key::KeyPair, Error> {
+pub fn decode_secret_key(secret: &str, password: Option<&str>, certificate: Option<Certificate>) -> Result<key::KeyPair, Error> {
     let mut format = None;
     let secret = {
         let mut started = false;
@@ -77,7 +78,7 @@ pub fn decode_secret_key(secret: &str, password: Option<&str>) -> Result<key::Ke
 
     let secret = BASE64_MIME.decode(secret.as_bytes())?;
     match format {
-        Some(Format::Openssh) => decode_openssh(&secret, password),
+        Some(Format::Openssh) => decode_openssh(&secret, password, certificate),
         Some(Format::Rsa) => decode_rsa(&secret),
         Some(Format::Pkcs5Encrypted(enc)) => decode_pkcs5(&secret, password, enc),
         Some(Format::Pkcs8Encrypted) | Some(Format::Pkcs8) => {

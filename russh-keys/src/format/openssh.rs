@@ -4,13 +4,14 @@ use aes::cipher::block_padding::NoPadding;
 use aes::cipher::{BlockDecryptMut, KeyIvInit, StreamCipher};
 use bcrypt_pbkdf;
 use ctr::Ctr64BE;
+use ssh_key::Certificate;
 
 use crate::encoding::Reader;
 use crate::{ec, key, Error, KEYTYPE_ED25519, KEYTYPE_RSA};
 
 /// Decode a secret key given in the OpenSSH format, deciphering it if
 /// needed using the supplied password.
-pub fn decode_openssh(secret: &[u8], password: Option<&str>) -> Result<key::KeyPair, Error> {
+pub fn decode_openssh(secret: &[u8], password: Option<&str>, certificate: Option<Certificate>) -> Result<key::KeyPair, Error> {
     if matches!(secret.get(0..15), Some(b"openssh-key-v1\0")) {
         let mut position = secret.reader(15);
 
@@ -35,7 +36,7 @@ pub fn decode_openssh(secret: &[u8], password: Option<&str>) -> Result<key::KeyP
         for _ in 0..nkeys {
             // TODO check: never really loops beyond the first key
             let key_type = position.read_string()?;
-            if key_type == KEYTYPE_ED25519 {
+            if key_type == KEYTYPE_ED25519 && certificate.is_none() {
                 let pubkey = position.read_string()?;
                 let seckey = position.read_string()?;
                 let _comment = position.read_string()?;
@@ -46,6 +47,17 @@ pub fn decode_openssh(secret: &[u8], password: Option<&str>) -> Result<key::KeyP
                     seckey.get(..32).ok_or(Error::KeyIsCorrupt)?,
                 )?;
                 return Ok(key::KeyPair::Ed25519(secret));
+            } else if key_type == KEYTYPE_ED25519 && certificate.is_some() {
+                let pubkey = position.read_string()?;
+                let seckey = position.read_string()?;
+                let _comment = position.read_string()?;
+                if Some(pubkey) != seckey.get(32..) {
+                    return Err(Error::KeyIsCorrupt);
+                }
+                let secret = ed25519_dalek::SigningKey::try_from(
+                    seckey.get(..32).ok_or(Error::KeyIsCorrupt)?,
+                )?;
+                return Ok(key::KeyPair::Ed25519Cert { key: secret, cert: certificate.unwrap() });
             } else if key_type == KEYTYPE_RSA {
                 return key::KeyPair::new_rsa_with_hash(
                     &position.read_ssh()?,

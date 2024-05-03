@@ -2,7 +2,7 @@
 /// Run this example with:
 /// cargo run --all-features --example client_exec_interactive -- -k <private key path> <host> <command>
 ///
-use std::convert::TryFrom;
+use std::convert::{TryFrom, TryInto};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use clap::Parser;
 use log::info;
 use russh::*;
 use russh_keys::*;
+use ssh_key::Certificate;
 use termion::raw::IntoRawMode;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::ToSocketAddrs;
@@ -29,11 +30,13 @@ async fn main() -> Result<()> {
 
     info!("Connecting to {}:{}", cli.host, cli.port);
     info!("Key path: {:?}", cli.private_key);
+    info!("Public Key path: {:?}", cli.certificate);
 
     // Session is a wrapper around a russh client, defined down below
     let mut ssh = Session::connect(
         cli.private_key,
-        cli.username.unwrap_or("root".to_string()),
+        cli.certificate,
+        cli.username.unwrap_or("ubuntu".to_string()),
         (cli.host, cli.port),
     )
     .await?;
@@ -85,10 +88,34 @@ pub struct Session {
 impl Session {
     async fn connect<P: AsRef<Path>, A: ToSocketAddrs>(
         key_path: P,
+        cert_path: P,
         user: impl Into<String>,
         addrs: A,
     ) -> Result<Self> {
-        let key_pair = load_secret_key(key_path, None)?;
+        let cert_bytes = std::fs::read(cert_path).unwrap();
+        let openssh_cert = Certificate::from_openssh(&String::from_utf8(cert_bytes.clone()).unwrap()).unwrap();
+
+        let key_pair = load_secret_key(key_path, None, Some(openssh_cert))?;
+
+        // SKIP Ceritifcate
+        // let key_pair = load_secret_key(key_path, None, None)?;
+        
+        // openssh_cert.
+        // println!("public_key - {:?}", key_pair.public_key_base64());
+
+        // let priv_key_bytes = std::fs::read(key_path).unwrap();
+        // let priv_key: [u8; 32] = priv_key_bytes[..32].try_into().unwrap();
+
+        
+        // // let public_key = openssh_cert.
+
+        // let keypair_bytes = [priv_key, public_key.clone()].concat();
+
+        // println!("public_key - {:?}", public_key_text);
+        // let key_pair = ed25519_dalek::SigningKey::from_bytes(priv_key);
+
+        // let key_pair = key::KeyPair::Ed25519();
+
         let config = client::Config {
             inactivity_timeout: Some(Duration::from_secs(5)),
             ..<_>::default()
@@ -196,6 +223,9 @@ pub struct Cli {
 
     #[clap(long, short = 'k')]
     private_key: PathBuf,
+
+    #[clap(long, short = 'c')]
+    certificate: PathBuf,
 
     #[clap(multiple = true, index = 2, required = true)]
     command: Vec<String>,
